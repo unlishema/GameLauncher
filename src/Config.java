@@ -1,5 +1,4 @@
 
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -12,37 +11,35 @@ public class Config extends Properties {
 
 	private static final long serialVersionUID = 1L;
 
-	public Config() {
+	public final File file;
 
+	public Config(final String filePath) {
+		this.file = new File(filePath);
+		this.read();
 	}
 
-	public Config(final String fileName) {
-		this.read(fileName);
-	}
-	
 	public void setDefault(final String key, final String value) {
-		if(this.getProperty(key) == null) {
+		if (this.getProperty(key) == null) {
 			this.setProperty(key, value);
 		}
 	}
-	
-	public void createIfNotExists(final String fileName) {
-		final File file = new File(fileName);
-		if(!file.exists()) {
+
+	public void createIfNotExists() {
+		if (!this.file.exists()) {
 			try {
-				file.createNewFile();
-				this.write(fileName);
+				this.file.createNewFile();
+				this.write();
 			} catch (final Exception e) {
 				System.err.println(e);
 			}
 		}
 	}
 
-	public void read(final String fileName) {
+	public void read() {
 		InputStream fileIn = null;
 
 		try {
-			fileIn = new FileInputStream(new File(fileName));
+			fileIn = new FileInputStream(this.file);
 			this.load(fileIn);
 		} catch (final IOException e) {
 			e.printStackTrace();
@@ -57,11 +54,11 @@ public class Config extends Properties {
 		}
 	}
 
-	public void write(final String fileName) {
+	public void write() {
 		FileOutputStream fileOut = null;
 
 		try {
-			fileOut = new FileOutputStream(new File(fileName));
+			fileOut = new FileOutputStream(this.file);
 			this.store(fileOut, "Config");
 		} catch (final FileNotFoundException e) {
 			e.printStackTrace();

@@ -1,8 +1,11 @@
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 
 import org.json.simple.JSONArray;
@@ -21,7 +24,8 @@ public class GameLauncher extends PApplet {
 	private final Config config = new Config("launcher.config");
 	private final SimpleKeyHandler skh = new SimpleKeyHandler(this);
 
-	private final ArrayList<VersionFile> versionUpdateList = new ArrayList<VersionFile>();
+	private final ArrayList<VersionFile> versionList = new ArrayList<VersionFile>();
+	private final UpdateFileList updateList = new UpdateFileList();
 
 	private final Rectangle closeBtn = new Rectangle(363, 8, 27, 27);
 	private final ProgressBar progressBar = new ProgressBar(50, 125, 300, 50);
@@ -32,44 +36,83 @@ public class GameLauncher extends PApplet {
 	private PImage backgroundImage;
 	private PImage closeBtnImage;
 
-	protected VersionFile compiledUpdate = null;
-	protected Version version;
-	protected File launcher, relauncher;
+	protected Version version, versionToUpdateTo;
+	protected File launcher, relauncher, game;
 	protected String url = "", mainInfo = "Checking for Update", subInfo = "Loading...";
-	protected boolean relaunchNeeded = false;
+	protected boolean isDownloadingFiles = false, relaunchNeeded = false;
 
-	private void compileUpdateFiles() throws InterruptedException {
-		this.mainInfo = "Compiling Update List";
-		this.subInfo = "0/0 (0/0)";
+	/**
+	 * NOTICE Complex Stuff
+	 * If the version has the Launcher as an update file we only update to that
+	 * version for now and once we update everything except the Launcher then we
+	 * make a temp file with new Launcher and then run the Relauncher and close the
+	 * Launcher<br>
+	 * <br>
+	 * The Relauncher will delete old Launcher + config and move new Launcher +
+	 * config in place and the Run the Launcher again using the name in the new
+	 * config<br>
+	 * <br>
+	 * While copying a file over if we exit we need to make sure to save info on
+	 * where we was with update so we can resume at a later time
+	 */
+
+	private void compileUpdateFiles() {
+		this.subInfo = "Compiling Update List";
 		this.progressBar.progress = 0.0f;
 
-		/**
-		 * FIXME Complex Stuff
-		 * If the version has the Launcher as an update file we only update to that
-		 * version for now and once we update everything except the Launcher then we
-		 * make a temp file with new Launcher and then run the Relauncher and close the
-		 * Launcher<br>
-		 * <br>
-		 * The Relauncher will delete old Launcher + config and move new Launcher +
-		 * config in place and the Run the Launcher again using the name in the new
-		 * config<br>
-		 * <br>
-		 * If file was create in 1 update and then deleted in another later one, we can
-		 * skip downloading it at all<br>
-		 * <br>
-		 * If a file was modifier and then deleted later we can skip downloading it at
-		 * all<br>
-		 * <br>
-		 * If a file was deleted and then created make sure we can just update the
-		 * file instead of deleting and then creating<br>
-		 * <br>
-		 * While copying a file over if we exit we need to make sure to save info on
-		 * where we was with update so we can resume at a later time
-		 * 
-		 */
+		int index = 0;
+		for (final VersionFile vf : this.versionList) {
+			this.updateList.add(vf);
+			this.progressBar.progress = (float) (++index) / this.versionList.size();
+		}
+	}
 
-		// TODO Determine which Files from each version is needed to update game
-		// Check for all the Complex stuff Above
+	private void downloadUpdateFiles() throws InterruptedException {
+		this.mainInfo = "Downloading Update Files";
+		this.subInfo = "0 / " + this.updateList.size();
+		this.progressBar.progress = 0.0f;
+		this.isDownloadingFiles = true;
+
+		int index = 0;
+		for (final UpdateData ud : this.updateList) {
+			this.progressBar.progress = 0.0f;
+			this.subInfo = ++index + " / " + this.updateList.size();
+
+			if (!ud.getAction().equals(FileData.STABLE)) {
+				try {
+					final String tempPath;
+					if (ud.getFile().getName().equals(this.launcher.getName()))
+						tempPath = ud.getFile().getPath() + "_dl";
+					else
+						tempPath = ud.getFile().getPath();
+
+					final String path = tempPath.replaceAll("\\\\", "/");
+					final File file = new File(this.sketchPath() + "/" + path);
+					if (!file.exists() && !file.getName().contains(".")) file.mkdir();
+
+					if (!file.isDirectory()) {
+						final URL url = new URL(this.url + "/" + ud.getVersion() + "/" + path);
+						final long fileSizeToDownload = url.openConnection().getContentLengthLong();
+						final BufferedInputStream in = new BufferedInputStream(url.openStream());
+
+						final FileOutputStream fos = new FileOutputStream(file);
+						byte[] dataBuffer = new byte[1024];
+						int bytesRead;
+						while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
+							fos.write(dataBuffer, 0, bytesRead);
+							this.progressBar.progress = ((float) file.length() / fileSizeToDownload);
+						}
+						in.close();
+						fos.close();
+					}
+				} catch (final Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			this.progressBar.progress = 1.0f;
+		}
+		this.isDownloadingFiles = false;
 	}
 
 	private void downloadVersionFiles() {
@@ -82,12 +125,12 @@ public class GameLauncher extends PApplet {
 			final JSONParser parser = new JSONParser();
 			final JSONObject obj = (JSONObject) parser.parse(new InputStreamReader(url.openStream()));
 
-			final JSONArray fileData = (JSONArray) obj.get("versions");
+			final JSONArray versionData = (JSONArray) obj.get("versions");
 
 			int index = 0;
-			Version lastVersion = new Version(0, 0, 0);
-			for (final Object o : fileData) {
-				this.progressBar.progress = ++index / fileData.size();
+			Version lastVersion = null;
+			for (final Object o : versionData) {
+				this.progressBar.progress = (float) (++index) / versionData.size();
 				final Version version = new Version((String) o);
 
 				// If Version is newer than current we need to update to it
@@ -99,13 +142,19 @@ public class GameLauncher extends PApplet {
 					for (final FileData fd : vFile.getFiles()) {
 						if (fd.getAction().equals(FileData.MODIFY)
 								&& fd.getFile().getName().equals(this.launcher.getName())) {
-							System.out.println("Launcher Update Found in: " + version);
+							if (Version.debug) System.out.println("Launcher Update Found in: " + version);
 							this.relaunchNeeded = true;
+						}
+						if (fd.getAction().equals(FileData.DELETE)
+								&& fd.getFile().getName().equals(this.launcher.getName())) {
+							System.err.println("MAJOR ISSUE!!! You Deleted the Launcher in: " + version);
+							this.versionToUpdateTo = null;
+							return;
 						}
 					}
 
 					// Add it to the List to be Updated
-					this.versionUpdateList.add(vFile);
+					this.versionList.add(vFile);
 					lastVersion = version;
 					if (Version.debug) {
 						System.out.println("Update to Version: " + version);
@@ -116,8 +165,11 @@ public class GameLauncher extends PApplet {
 					System.out.println("Old Version: " + version);
 				}
 			}
-			this.compiledUpdate = new VersionFile(lastVersion);
-		} catch (Exception ex) {
+			this.versionToUpdateTo = lastVersion;
+		} catch (final UnknownHostException ex) {
+			// DEBUG Temp Only Remove Later
+			System.err.println("Trouble Connecting to https://unlishema.org, please check your internet connection!");
+		} catch (final Exception ex) {
 			ex.printStackTrace();
 		}
 	}
@@ -131,90 +183,67 @@ public class GameLauncher extends PApplet {
 		if (Version.debug) System.out.println("Launcher EXE:\t" + this.launcher);
 		this.relauncher = new File(this.sketchPath() + "\\" + this.config.getProperty("relauncher"));
 		if (Version.debug) System.out.println("Re-Launcher EXE:\t" + this.relauncher);
+		this.game = new File(this.sketchPath() + "\\" + this.config.getProperty("game"));
+		if (Version.debug) System.out.println("Game EXE:\t" + this.game);
 	}
 
-	// TODO Way Later On... Add Ability for Launcher to get Updates in background
-	// while the game is running
+	/*
+	 * TODO zLater On...
+	 * Add Ability for Launcher to get Updates in background while the game is
+	 * running
+	 * Add Ability to Show a Change-Log upon update completion also a Launch Button
+	 * maybe???
+	 */
 	public void updateFiles() throws InterruptedException {
-		// DEBUG Remove Later
-		System.out.println("[BEGIN] Updating");
+		if (Version.debugDetail) System.out.println("[BEGIN] Updating");
 
-		/**
-		 * FIXME Complex Stuff
-		 * If the version has the Launcher as an update file we only update to that
-		 * version for now and once we update everything except the Launcher then we
-		 * make a temp file with new Launcher and then run the Relauncher and close the
-		 * Launcher<br>
-		 * <br>
-		 * The Relauncher will delete old Launcher + config and move new Launcher +
-		 * config in place and the Run the Launcher again using the name in the new
-		 * config<br>
-		 * <br>
-		 * If file was create in 1 update and then deleted in another later one, we can
-		 * skip downloading it at all<br>
-		 * <br>
-		 * If a file was modifier and then deleted later we can skip downloading it at
-		 * all<br>
-		 * <br>
-		 * If a file was deleted and then created make sure we delete and then create a
-		 * new file to make sure it updates<br>
-		 * <br>
-		 * While copying a file over if we exit we need to make sure to save info on
-		 * where we was with update so we can resume at a later time
-		 * 
-		 */
-
-		// Download Version Files
+		// Download the Versions.json and store info needed
 		this.downloadVersionFiles();
-
-		if (this.compiledUpdate != null) {
-			// FIXME Compile Update Files
-			this.compileUpdateFiles();
-
-			// Download Update Files
-			this.mainInfo = "Downloading Update Files";
-			this.subInfo = "(0/0)";
-			this.progressBar.progress = 0.0f;
-			// TODO Download the files that are required to update to the latest version
-			// into a temp dir
-			// Info for Downloading Files https://www.baeldung.com/java-download-file
-			Thread.sleep(100);
-
-			// Copy Update Files
-			this.mainInfo = "Copying Update Files";
-			this.subInfo = "(0/0)";
-			this.progressBar.progress = 0.0f;
-			// TODO Copy all the files to the correct dir
-			// Make sure to account for the Complex Stuff Above
-			Thread.sleep(100);
-
-			// Update Version Info in Config
-			this.mainInfo = "Finishing Up";
-			this.subInfo = "Updating Version Info";
-			this.progressBar.progress = 0.0f;
-			this.config.setProperty("version", this.compiledUpdate.version.toString());
-			this.config.write("launcher.config");
-
-			if (this.relaunchNeeded) {
-				// Re-launch the Launcher
-				this.subInfo = "Re-Launching Launcher";
-				this.progressBar.progress = 0.0f;
-				// FIXME Re-Launch the Updater using another program to update the Launcher if
-				// needed and then return
-			} else {
-				// Launch the Game
-				this.subInfo = "Launching Deities Online";
-				this.progressBar.progress = 1.0f;
-				// FIXME Launch Deities Online once all Updates are complete
-			}
+		if (this.versionToUpdateTo == null) {
+			// FIXME Throw Error because there is no version to update to
+			return;
 		}
 
-		// DEBUG Remove Later
-		System.out.println("[FINISH] Updating");
+		// Compile all Version Files into a List of files to update
+		this.compileUpdateFiles();
+		if (this.updateList.size() == 0) {
+			// FIXME Throw Error because there is no files to update
+			return;
+		}
+
+		// Download the Files that need updated
+		this.downloadUpdateFiles();
+
+		// Finish Up
+		this.mainInfo = "Finishing Up";
+
+		// Clean Up temp Files and anything else that needs cleaned up
+		this.subInfo = "Cleaning Up";
+		// FIXME zzLater Make sure we cleanup
+
+		if (this.relaunchNeeded) {
+			// Re-launch the Launcher
+			this.subInfo = "Re-Launching Launcher";
+			this.progressBar.progress = 1.0f;
+			// FIXME zzzLater Re-Launch the Updater using another program to update the
+			// Launcher if needed and then return
+		} else {
+			// Launch the Game
+			this.subInfo = "Launching Deities Online";
+			this.progressBar.progress = 1.0f;
+			// FIXME zzzLater Launch Deities Online once all Updates are complete
+		}
+
+		if (Version.debugDetail) System.out.println("[FINISH] Updating");
+		this.exit();
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see processing.core.PApplet#settings()
+	 */
 	public void settings() {
-		size(400, 200);
+		this.size(400, 200);
 	}
 
 	/*
@@ -222,7 +251,7 @@ public class GameLauncher extends PApplet {
 	 * @see processing.core.PApplet#initSurface()
 	 */
 	public PSurface initSurface() {
-		PSurface pSurface = super.initSurface();
+		final PSurface pSurface = super.initSurface();
 		((SmoothCanvas) ((PSurfaceAWT) surface).getNative()).getFrame().setUndecorated(true);
 		return pSurface;
 	}
@@ -232,7 +261,7 @@ public class GameLauncher extends PApplet {
 	 * @see processing.core.PApplet#setup()
 	 */
 	public void setup() {
-		background(0);
+		this.background(0);
 		this.skh.overrideEscape(true);
 
 		this.backgroundImage = this.loadImage("Launcher.png");
@@ -244,6 +273,7 @@ public class GameLauncher extends PApplet {
 		this.config.setDefault("url", "https://unlishema.org/deities-update");
 		this.config.setDefault("launcher", this.sketchPath() + "\\GameLauncher.jar");
 		this.config.setDefault("relauncher", this.sketchPath() + "\\Relauch.jar");
+		this.config.setDefault("game", this.sketchPath() + "\\BasicGame.jar");
 
 		// Read Launcher Config
 		this.readLauncherConfig();
@@ -286,8 +316,14 @@ public class GameLauncher extends PApplet {
 	 */
 	public void mousePressed() {
 		if (this.closeBtn.contains(this.mouseX, this.mouseY)) {
-			System.out.println("Close Clicked");
-			// FIXME Make sure we cleanup before closing
+			if (this.isDownloadingFiles) {
+				// TODO Write to the Config about files already Downloaded
+			}
+
+			// TODO Make sure we cleanup before closing and take into account the info
+			// above and below this
+
+			if (Version.debugDetail) System.out.println("Closing Game Launcher");
 			this.exit();
 		}
 	}
