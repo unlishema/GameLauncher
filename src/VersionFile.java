@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import javax.swing.JProgressBar;
 
@@ -17,7 +19,7 @@ public class VersionFile {
 	private final PApplet app;
 	public final Version version;
 
-	private final ArrayList<FileData> files = new ArrayList<FileData>();
+	private final List<FileData> files = Collections.synchronizedList(new ArrayList<FileData>());
 
 	public VersionFile(final PApplet app, final Version version) {
 		this.app = app;
@@ -140,7 +142,7 @@ public class VersionFile {
 		return null;
 	}
 
-	public ArrayList<FileData> getFiles() {
+	public List<FileData> getFiles() {
 		return this.files;
 	}
 
