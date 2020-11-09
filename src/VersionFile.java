@@ -12,206 +12,185 @@ import java.util.ArrayList;
 
 import javax.swing.JProgressBar;
 
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
+import processing.core.PApplet;
+import processing.data.JSONArray;
+import processing.data.JSONObject;
 
 public class VersionFile {
 
-	public final Version version;
+  private final PApplet app;
+  public final Version version;
 
-	private final ArrayList<FileData> files = new ArrayList<FileData>();
+  private final ArrayList<FileData> files = new ArrayList<FileData>();
 
-	public VersionFile(final Version version) {
-		this.version = version;
-	}
+  public VersionFile(final PApplet app, final Version version) {
+    this.app = app;
+    this.version = version;
+  }
 
-	public VersionFile(final File file) {
-		final String s = file.toString();
-		final String versionString = s.substring(s.lastIndexOf("\\") + 1, s.lastIndexOf("."));
-		this.version = new Version(versionString);
+  public VersionFile(final PApplet app, final File file) {
+    this.app = app;
+    final String s = file.toString();
+    final String versionString = s.substring(s.lastIndexOf("\\") + 1, s.lastIndexOf("."));
+    this.version = new Version(versionString);
+    this.loadData(file.getAbsolutePath());
+  }
 
-		try {
-			final JSONParser parser = new JSONParser();
-			final JSONObject obj = (JSONObject) parser.parse(new FileReader(file));
+  public VersionFile(final PApplet app, final Version version, final String fileURL) {
+    this.app = app;
+    this.version = version;
+    this.loadData(fileURL);
+  }
 
-			JSONArray fileData = (JSONArray) obj.get("files");
+  private void loadData(final String location) {
+    try {
+      final JSONObject obj = this.app.loadJSONObject(location);
+      final JSONArray fileData = obj.getJSONArray("files");
 
-			for (final Object o : fileData) {
-				final JSONObject jo = (JSONObject) o;
-				final String action = (String) jo.get("action");
-				final File f = new File((String) jo.get("file"));
-				final long lm = (long) jo.get("lastModified");
+      for (int i = 0; i < fileData.size(); i++) {
+        final JSONObject jo = fileData.getJSONObject(i);
+        final String action = jo.getString("action");
+        final File f = new File(jo.getString("file"));
+        final long lm = jo.getLong("lastModified");
 
-				final FileData fd = this.addFile(action, f, lm);
+        final FileData fd = this.addFile(action, f, lm);
 
-				if (Version.debugDetail) System.out.println("FileData: " + fd);
-			}
-		} catch (final Exception e) {
-			System.err.println(e);
-		}
-	}
+        if (Version.debugDetail) System.out.println("FileData: " + fd);
+      }
+    } 
+    catch (final Exception e) {
+      System.err.println(e);
+    }
+  }
 
-	public VersionFile(final Version version, final URL fileURL) {
-		this.version = version;
+  public FileData addFile(final String action, final File file) {
+    final FileData fd = new FileData(action, file);
+    this.files.add(fd);
+    return fd;
+  }
 
-		try {
-			final JSONParser parser = new JSONParser();
-			final JSONObject obj = (JSONObject) parser.parse(new InputStreamReader(fileURL.openStream()));
+  public FileData addFile(final String action, final File file, final long lastModified) {
+    final FileData fd = new FileData(action, file, lastModified);
+    this.files.add(fd);
+    return fd;
+  }
 
-			JSONArray fileData = (JSONArray) obj.get("files");
+  private void copyFileUsingStream(final File source, final File dest) throws IOException {
+    InputStream is = null;
+    OutputStream os = null;
+    try {
+      is = new FileInputStream(source);
+      os = new FileOutputStream(dest);
+      byte[] buffer = new byte[1024];
+      int length;
+      while ((length = is.read(buffer)) > 0) {
+        os.write(buffer, 0, length);
+      }
+    } 
+    catch (final Exception e) {
+      System.err.println(e);
+    } 
+    finally {
+      if (is != null) is.close();
+      if (os != null) os.close();
+    }
+  }
 
-			for (final Object o : fileData) {
-				final JSONObject jo = (JSONObject) o;
-				final String action = (String) jo.get("action");
-				final File f = new File((String) jo.get("file"));
-				final long lm = (long) jo.get("lastModified");
+  public void copyUpdatedFiles(final JProgressBar progressBar, final File copyDir) {
+    if (copyDir.exists() && copyDir.delete()) {
+      if (Version.debugDetail) System.out.println("Deleted Dir: " + copyDir);
+    }
+    if (!copyDir.exists()) copyDir.mkdirs();
 
-				final FileData fd = this.addFile(action, f, lm);
+    if (Version.debug) System.out.println("Copying " + this.files.size() + " Files!");
 
-				if (Version.debugDetail) System.out.println("FileData: " + fd);
-			}
-		} catch (final Exception e) {
-			System.err.println(e);
-		}
-	}
+    int i = 0;
+    for (final FileData fd : this.files) {
+      if (fd.getAction().equals(FileData.CREATE) || fd.getAction().equals(FileData.MODIFY)) {
+        if (!fd.getFile().isDirectory()) {
+          final File file = fd.getFile();
+          final String fileName = file.getName();
+          final String filePath = file.getPath().replace(fileName, "");
 
-	public FileData addFile(final String action, final File file) {
-		final FileData fd = new FileData(action, file);
-		this.files.add(fd);
-		return fd;
-	}
+          final File copyFile = new File(copyDir.getPath() + File.separator + filePath, fileName);
 
-	public FileData addFile(final String action, final File file, final long lastModified) {
-		final FileData fd = new FileData(action, file, lastModified);
-		this.files.add(fd);
-		return fd;
-	}
+          try {
+            if (!copyFile.exists()) {
+              final File dirFile = new File(copyDir.getPath() + File.separator + filePath);
+              dirFile.mkdirs();
+              copyFile.createNewFile();
+            }
+            this.copyFileUsingStream(file, copyFile);
+            if (Version.debugDetail) System.out.println("Copied File: " + copyFile);
+          } 
+          catch (Exception e) {
+            System.err.println(e);
+          }
+        }
 
-	private void copyFileUsingStream(final File source, final File dest) throws IOException {
-		InputStream is = null;
-		OutputStream os = null;
-		try {
-			is = new FileInputStream(source);
-			os = new FileOutputStream(dest);
-			byte[] buffer = new byte[1024];
-			int length;
-			while ((length = is.read(buffer)) > 0) {
-				os.write(buffer, 0, length);
-			}
-		} catch (final Exception e) {
-			System.err.println(e);
-		} finally {
-			if (is != null) is.close();
-			if (os != null) os.close();
-		}
-	}
+        double progress = (((double) i) / ((double) this.files.size())) * 100;
+        progressBar.setValue((int) progress);
+      }
+      i++;
+    }
+    if (Version.debug) System.out.println("Copied " + this.files.size() + " Files!");
+    if (Version.debugDetail) System.out.println();
+  }
 
-	public void copyUpdatedFiles(final JProgressBar progressBar, final File copyDir) {
-		if (copyDir.exists() && copyDir.delete()) {
-			if (Version.debugDetail) System.out.println("Deleted Dir: " + copyDir);
-		}
-		if (!copyDir.exists()) copyDir.mkdirs();
+  public FileData getFile(final File file) {
+    for (final FileData f : this.files) {
+      final String fileString = file.toString();
+      final String testFile = f.getFile().toString();
+      if (fileString.equals(testFile)) {
+        return f;
+      }
+    }
+    return null;
+  }
 
-		if (Version.debug) System.out.println("Copying " + this.files.size() + " Files!");
+  public ArrayList<FileData> getFiles() {
+    return this.files;
+  }
 
-		int i = 0;
-		for (final FileData fd : this.files) {
-			if (fd.getAction().equals(FileData.CREATE) || fd.getAction().equals(FileData.MODIFY)) {
-				if (!fd.getFile().isDirectory()) {
-					final File file = fd.getFile();
-					final String fileName = file.getName();
-					final String filePath = file.getPath().replace(fileName, "");
+  public boolean hasFile(final File file) {
+    for (final FileData f : this.files) {
+      final String fileString = file.toString();
+      final String testFile = f.getFile().toString();
+      if (fileString.equals(testFile)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
-					final File copyFile = new File(copyDir.getPath() + File.separator + filePath, fileName);
+  @SuppressWarnings("unchecked")
+    public void write(final File versionDir) throws IOException {
+    final File file = new File(versionDir, this.version + ".json");
 
-					try {
-						if (!copyFile.exists()) {
-							final File dirFile = new File(copyDir.getPath() + File.separator + filePath);
-							dirFile.mkdirs();
-							copyFile.createNewFile();
-						}
-						this.copyFileUsingStream(file, copyFile);
-						if (Version.debugDetail) System.out.println("Copied File: " + copyFile);
-					} catch (Exception e) {
-						System.err.println(e);
-					}
-				}
+    final JSONObject obj = new JSONObject();
+    final JSONArray fileArray = new JSONArray();
 
-				double progress = (((double) i) / ((double) this.files.size())) * 100;
-				progressBar.setValue((int) progress);
-			}
-			i++;
-		}
-		if (Version.debug) System.out.println("Copied " + this.files.size() + " Files!");
-		if (Version.debugDetail) System.out.println();
-	}
+    int index = 0;
+    for (final FileData fData : this.getFiles()) {
+      final JSONObject fileData = new JSONObject();
+      fileData.setString("file", fData.getFile().toString());
+      fileData.setString("action", fData.getAction());
+      fileData.setLong("lastModified", fData.getLastModified());
+      // TODO zzLater add md5 of file and maybe other means to tell if the file has changed.
+      fileArray.setJSONObject(index++, fileData);
+    }
+    obj.setJSONArray("files", fileArray);
 
-	public FileData getFile(final File file) {
-		for (final FileData f : this.files) {
-			final String fileString = file.toString();
-			final String testFile = f.getFile().toString();
-			if (fileString.equals(testFile)) {
-				return f;
-			}
-		}
-		return null;
-	}
+    this.app.saveJSONObject(obj, file.getAbsolutePath());
+  }
 
-	public ArrayList<FileData> getFiles() {
-		return this.files;
-	}
+  @Override
+    public String toString() {
+    final StringBuilder sb = new StringBuilder();
 
-	public boolean hasFile(final File file) {
-		for (final FileData f : this.files) {
-			final String fileString = file.toString();
-			final String testFile = f.getFile().toString();
-			if (fileString.equals(testFile)) {
-				return true;
-			}
-		}
-		return false;
-	}
+    sb.append(this.version.toString());
+    sb.append(".json");
 
-	@SuppressWarnings("unchecked")
-	public void write(final File versionDir) throws IOException {
-		final File file = new File(versionDir, this.version + ".json");
-
-		final JSONObject obj = new JSONObject();
-		final JSONArray fileArray = new JSONArray();
-
-		for (final FileData fData : this.getFiles()) {
-			final JSONObject fileData = new JSONObject();
-			fileData.put("file", fData.getFile().toString());
-			fileData.put("action", fData.getAction());
-			fileData.put("lastModified", fData.getLastModified());
-			// TODO zzLater add md5 of file and maybe other means to tell if the file has changed.
-			fileArray.add(fileData);
-		}
-		obj.put("files", fileArray);
-
-		try (FileWriter fileWriter = new FileWriter(file)) {
-			final Gson gson = new GsonBuilder().setPrettyPrinting().create();
-			final JsonParser jp = new JsonParser();
-			final JsonElement je = jp.parse(obj.toJSONString());
-			fileWriter.write(gson.toJson(je));
-		} catch (final Exception e) {
-			System.err.println(e);
-		}
-	}
-
-	@Override
-	public String toString() {
-		final StringBuilder sb = new StringBuilder();
-
-		sb.append(this.version.toString());
-		sb.append(".json");
-
-		return sb.toString();
-	}
+    return sb.toString();
+  }
 }
