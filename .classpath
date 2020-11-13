@@ -20,6 +20,5 @@
 	<classpathentry kind="lib" path="Libraries/jogl-all-natives-windows-i586.jar"/>
 	<classpathentry kind="lib" path="Libraries/jogl-all.jar"/>
 	<classpathentry kind="lib" path="Libraries/SimpleKeyHandler.jar"/>
-	<classpathentry kind="lib" path="Libraries/gson-2.6.2.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
