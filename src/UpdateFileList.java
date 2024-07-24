@@ -3,8 +3,6 @@ import java.util.Collections;
 import java.util.List;
 
 public class UpdateFileList {
-  private static final long serialVersionUID = 2392591370264553450L;
-
   private final List<UpdateData> list = Collections.synchronizedList(new ArrayList<UpdateData>());
 
   private boolean add(final UpdateData updateData) {
